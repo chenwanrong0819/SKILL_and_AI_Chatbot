@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chatbot with Skills</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .glass { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
+        .dark .glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(10px); border-color: rgba(255,255,255,0.1); }
+        /* custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 h-screen flex overflow-hidden font-sans">
+
+    <!-- Sidebar -->
+    <aside class="w-64 glass border-r border-gray-200 dark:border-gray-800 flex flex-col transition-transform duration-300">
+        <div class="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
+            <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-teal-400">AI Agent</h1>
+            <button onclick="createNewSession()" class="text-blue-500 hover:text-blue-400 transition-colors">
+                <i class="fas fa-edit"></i>
+            </button>
+        </div>
+        <div class="p-2 overflow-y-auto flex-1 space-y-1" id="session-list">
+            <!-- Sessions will be loaded here -->
+        </div>
+        <div class="p-4 border-t border-gray-200 dark:border-gray-800">
+            <button onclick="showMemory()" class="w-full py-2 px-4 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+                <i class="fas fa-brain"></i> View Memory
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="flex-1 flex flex-col bg-white dark:bg-gray-950 relative">
+        
+        <!-- Header -->
+        <header class="h-14 border-b border-gray-200 dark:border-gray-800 flex items-center px-6 justify-between glass z-10">
+            <h2 class="font-semibold" id="current-session-title">New Chat</h2>
+        </header>
+
+        <!-- Messages Container -->
+        <div id="chat-container" class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+            <!-- Messages go here -->
+            <div class="text-center text-gray-400 text-sm mt-10">Start a conversation...</div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="p-4 glass border-t border-gray-200 dark:border-gray-800">
+            <!-- File Preview -->
+            <div id="file-preview" class="hidden mb-2 relative inline-block">
+                <img id="preview-img" class="h-20 w-20 object-cover rounded-lg border border-gray-300 dark:border-gray-700" src="" alt="preview">
+                <button onclick="clearFile()" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="max-w-4xl mx-auto flex items-end gap-2 bg-gray-100 dark:bg-gray-800 rounded-2xl p-2 border border-gray-300 dark:border-gray-700 focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                
+                <input type="file" id="file-upload" class="hidden" onchange="handleFileUpload(event)">
+                <button onclick="document.getElementById('file-upload').click()" class="p-3 text-gray-500 hover:text-blue-500 transition-colors rounded-xl flex-shrink-0">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+                
+                <textarea id="message-input" rows="1" class="w-full bg-transparent border-none focus:ring-0 resize-none p-3 text-sm dark:text-white" placeholder="Type a message..." oninput="this.style.height = '';this.style.height = this.scrollHeight + 'px'"></textarea>
+                
+                <button id="send-btn" onclick="sendMessage()" class="p-3 text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors flex-shrink-0 disabled:opacity-50">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+
+            <!-- Controls (Regenerate / Stop) -->
+            <div class="max-w-4xl mx-auto mt-2 flex justify-center gap-4 text-sm hidden" id="chat-controls">
+                <button onclick="regenerateLast()" class="text-gray-500 hover:text-blue-500 flex items-center gap-1 transition-colors">
+                    <i class="fas fa-redo"></i> Regenerate
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Memory Modal -->
+    <div id="memory-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 backdrop-blur-sm">
+        <div class="bg-white dark:bg-gray-800 rounded-xl w-full max-w-md p-6 shadow-2xl transform scale-95 transition-transform duration-200">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold">User Memory</h3>
+                <button onclick="closeMemory()" class="text-gray-500 hover:text-gray-300"><i class="fas fa-times"></i></button>
+            </div>
+            <ul id="memory-list" class="space-y-2 text-sm text-gray-300">
+                <!-- Memory items here -->
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = null;
+        let uploadedFileUri = null;
+        let isGenerating = false;
+
+        async function init() {
+            await loadSessions();
+            if(!currentSessionId) await createNewSession();
+        }
+
+        async function loadSessions() {
+            const res = await fetch('/api/sessions');
+            const sessions = await res.json();
+            const list = document.getElementById('session-list');
+            list.innerHTML = '';
+            
+            sessions.forEach(s => {
+                const btn = document.createElement('button');
+                btn.className = `w-full text-left px-3 py-2 rounded-lg text-sm truncate transition-colors ${s.id === currentSessionId ? 'bg-gray-200 dark:bg-gray-800' : 'hover:bg-gray-200 dark:hover:bg-gray-800/50'}`;
+                btn.innerHTML = `<i class="far fa-comment-alt mr-2 text-gray-500"></i> ${s.title}`;
+                btn.onclick = () => switchSession(s.id, s.title);
+                list.appendChild(btn);
+            });
+            
+            if(sessions.length > 0 && !currentSessionId) {
+                switchSession(sessions[0].id, sessions[0].title);
+            }
+        }
+
+        async function createNewSession() {
+            const res = await fetch('/api/sessions', { method: 'POST' });
+            const data = await res.json();
+            await loadSessions();
+            switchSession(data.id, data.title);
+        }
+
+        async function switchSession(id, title) {
+            currentSessionId = id;
+            document.getElementById('current-session-title').innerText = title;
+            document.getElementById('chat-controls').classList.add('hidden');
+            await loadSessions(); // to update active state in sidebar
+            await loadMessages();
+        }
+
+        async function loadMessages() {
+            const res = await fetch(`/api/sessions/${currentSessionId}/messages`);
+            const messages = await res.json();
+            const container = document.getElementById('chat-container');
+            container.innerHTML = '';
+            
+            if(messages.length === 0) {
+                container.innerHTML = '<div class="text-center text-gray-400 text-sm mt-10">Start a conversation...</div>';
+            } else {
+                messages.forEach(m => appendMessage(m.role, m.content, m.file_uri));
+            }
+            scrollToBottom();
+            
+            // Show regenerate if last message is model
+            if(messages.length > 0 && messages[messages.length-1].role === 'model') {
+                document.getElementById('chat-controls').classList.remove('hidden');
+            }
+        }
+
+        function appendMessage(role, content, fileUri) {
+            const container = document.getElementById('chat-container');
+            if(container.innerHTML.includes("Start a conversation")) container.innerHTML = '';
+            
+            const div = document.createElement('div');
+            div.className = `flex w-full ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+            
+            let fileHtml = '';
+            if(fileUri) {
+                if(fileUri.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
+                    fileHtml = `<img src="/${fileUri}" class="max-w-xs rounded-lg mb-2" />`;
+                } else {
+                    fileHtml = `<div class="mb-2 p-2 bg-gray-200 dark:bg-gray-700 rounded text-xs flex items-center gap-2"><i class="fas fa-file"></i> Document attached</div>`;
+                }
+            }
+
+            div.innerHTML = `
+                <div class="max-w-[75%] rounded-2xl p-4 ${role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none'}">
+                    ${fileHtml}
+                    <div class="whitespace-pre-wrap text-sm leading-relaxed">${escapeHtml(content)}</div>
+                </div>
+            `;
+            container.appendChild(div);
+            scrollToBottom();
+        }
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                uploadedFileUri = data.file_uri;
+                
+                // Show preview
+                document.getElementById('file-preview').classList.remove('hidden');
+                document.getElementById('preview-img').src = `/${uploadedFileUri}`;
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        function clearFile() {
+            uploadedFileUri = null;
+            document.getElementById('file-upload').value = '';
+            document.getElementById('file-preview').classList.add('hidden');
+        }
+
+        async function sendMessage(regenerate = false) {
+            if(isGenerating) return;
+            
+            const input = document.getElementById('message-input');
+            const content = input.value.trim();
+            
+            if(!content && !uploadedFileUri && !regenerate) return;
+            
+            if(!regenerate) {
+                appendMessage('user', content, uploadedFileUri);
+                input.value = '';
+                input.style.height = '';
+            } else {
+                // remove last model message from UI
+                const container = document.getElementById('chat-container');
+                container.lastElementChild.remove();
+            }
+            
+            document.getElementById('chat-controls').classList.add('hidden');
+            
+            // Add loading indicator
+            const loadingId = 'loading-' + Date.now();
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.id = loadingId;
+            div.className = `flex w-full justify-start`;
+            div.innerHTML = `
+                <div class="max-w-[75%] rounded-2xl p-4 bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none flex gap-2 items-center">
+                    <div class="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
+                    <div class="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                    <div class="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+                </div>
+            `;
+            container.appendChild(div);
+            scrollToBottom();
+
+            isGenerating = true;
+            document.getElementById('send-btn').disabled = true;
+
+            const reqBody = {
+                session_id: currentSessionId,
+                content: content,
+                file_uri: uploadedFileUri,
+                regenerate: regenerate
+            };
+            
+            clearFile();
+
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(reqBody)
+                });
+                
+                const data = await res.json();
+                document.getElementById(loadingId).remove();
+                
+                if(data.error) {
+                    appendMessage('model', data.error);
+                } else {
+                    appendMessage('model', data.reply);
+                    document.getElementById('chat-controls').classList.remove('hidden');
+                }
+            } catch(e) {
+                document.getElementById(loadingId).remove();
+                appendMessage('model', 'An error occurred.');
+            }
+            
+            isGenerating = false;
+            document.getElementById('send-btn').disabled = false;
+            
+            // update session list just in case title changed
+            if(!regenerate) await loadSessions();
+        }
+
+        async function regenerateLast() {
+            await sendMessage(true);
+        }
+
+        async function showMemory() {
+            const res = await fetch('/api/memory');
+            const memories = await res.json();
+            const list = document.getElementById('memory-list');
+            list.innerHTML = '';
+            
+            if(memories.length === 0) {
+                list.innerHTML = '<li>No memories saved yet.</li>';
+            } else {
+                memories.forEach(m => {
+                    list.innerHTML += `<li class="p-2 bg-gray-100 dark:bg-gray-700 rounded"><strong>${m.preference_key}</strong>: ${m.preference_value}</li>`;
+                });
+            }
+            
+            document.getElementById('memory-modal').classList.remove('hidden');
+            document.getElementById('memory-modal').classList.add('flex');
+        }
+
+        function closeMemory() {
+            document.getElementById('memory-modal').classList.add('hidden');
+            document.getElementById('memory-modal').classList.remove('flex');
+        }
+
+        function scrollToBottom() {
+            const c = document.getElementById('chat-container');
+            c.scrollTop = c.scrollHeight;
+        }
+
+        function escapeHtml(unsafe) {
+            return unsafe
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        }
+
+        // Handle enter to send
+        document.getElementById('message-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        init();
+    </script>
+</body>
+</html>
